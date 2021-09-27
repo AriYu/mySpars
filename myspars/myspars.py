@@ -3,36 +3,43 @@ This is my SPARS algorithm, which only implement visible method.
 """
 
 from ctypes.wintypes import BOOL
+from lib2to3.pytree import Node
 import math
+from re import M
 import numpy as np
 import random
 import matplotlib.pyplot as plt
 
 from typing import Tuple
+from typing import List
 
 show_animation = True
 
+class Edge:
+    def __init__(self, to : int, w : float) -> None:
+        self.to = to # 隣接頂点番号
+        self.w = w # 重み
+
+class Node:
+    def __init__(self, x : float, y : float) -> None:
+        self.x = x
+        self.y = y
+        self.edges : List[Edge] = []
+
+    def addEdge(self, edge) -> None:
+        self.edges.append(edge)
+
+    def addEdge(self, to : int, cost : float) -> None:
+        edge = Edge(to, cost)
+        self.edges.append(edge)
+
+    def __str__(self) -> str:
+        return str(self.x) + ", " + str(self.y)
+
 class MySpars:
-    """
-    docstring
-    """
-    class Node:
-        def __init__(self, x : float, y : float, cost : float , parent_index : int) -> None:
-            """
-            docstring
-            """
-            self.x = x
-            self.y = y
-            self.cost = cost
-            self.parent_index = parent_index
-        def __str__(self) -> str:
-            return str(self.x) + ", " + str(self.y) + ", " + str(self.cost) + ", " + str(self.parent_index)
 
     def __init__(self) -> None:
-        self.road_map = []
-        self.sample_x = []
-        self.sample_y = []
-        self.edges = []
+        self.graph : List[Node] = []
 
     @staticmethod
     def searchNearestFromList(sample_x : float, sample_y : float, ox : list[float], oy : list[float]) -> Tuple[int, float] :
@@ -48,65 +55,68 @@ class MySpars:
 
         return min_index, min_dist
 
-    def searchVisibleNode(self, sample_list_x : list[float], sample_list_y : list[float], target_x : float, target_y : float, delta : float, ox : list[float], oy : list [float], rr : float) -> list[int]:
+    def searchVisibleNode(self, qnew : Node, delta : float, ox : float, oy : float, rr : float) -> Tuple[list[int], List[Node]]:
         """
-        sample_list_x : 探索対象の x座標 のリスト
-        sample_list_y : 探索対象の y座標 のリスト
-        target_x : 基準の x座標
-        target_y : 基準の y座標
-        radius : 半径
-        
-        return : 探索対象のリストのうち、基準の座標から指定された半径の中にある座標のインデックスのリスト。
+        qnew : 新しいサンプル点
+        delta : visibleの範囲
+        ox : 障害物のx座標のリスト
+        oy : 障害物のy座標のリスト
+        rr : 障害物とどれくらい近いと干渉と判定するかの距離
+
+        ans1 : visible な node の index
+        ans2 : visible な node の コピー
         """
-        near_nodes = []
-        ans = []
-        for i in range(len(sample_list_x)):
-            dist = np.hypot(sample_list_x[i] - target_x, sample_list_y[i] - target_y)
+        ans_index : list[int] = []
+        ans_nodes : List[Node] = []
+
+        # qnewからdeltaの距離にあるNodeを検索
+        for i, node in enumerate(self.graph):
+            dist = np.hypot(node.x - qnew.x, node.y - qnew.y)
             if (dist < delta):
-                near_nodes.append(i)
+                if not self.is_collision_path(qnew, node, ox, oy, rr): # そのうち、qnewと接続できるものを検索
+                    ans_index.append(i)
+                    ans_nodes.append(node)
 
-        for node in near_nodes:
-            if not self.is_collision(target_x, target_y, sample_list_x[node], sample_list_y[node], rr, ox, oy):
-                ans.append(node)
+        return (ans_index, ans_nodes)
 
-        return ans
-
-    def is_collision(self, base_x : float, base_y : float, target_x : float, target_y : float, radius : float, ox : list[float], oy : list[float]) -> BOOL:
-        x = base_x
-        y = base_y
-        dx = target_x - base_x
-        dy = target_y - base_y
+    def is_collision_path(self, p0 : Node, p1 : Node, ox : list[float], oy : list[float], rr : float) -> BOOL:
+        dx = p1.x - p0.x
+        dy = p1.y - p0.y
         yaw = math.atan2(dy, dx)
         d = np.hypot(dx, dy)
 
-        D = radius
+        D = rr
         n_step = round(d / D)
+
+        x = p0.x
+        y = p0.y
 
         for i in range(n_step):
             _, dist = self.searchNearestFromList(x, y, ox, oy)
-            if dist <= radius:
-                return True # collision
+            if dist <= rr:
+                return True # collide
             x += D * math.cos(yaw)
             y += D * math.sin(yaw)
+        
+        return False # no collide           
 
-        return False # no collision
+    def is_collision(self, p : Node, ox : list[float], oy : list[float], rr : float) -> BOOL:
+        _, min_dist = self.searchNearestFromList(p.x, p.y, ox, oy)
+        if min_dist < rr: 
+            return True # collide
+        else:
+            return False # no collide
 
-    @staticmethod
-    def get_unique_list(seq):
-        seen = []
-        return [x for x in seq if x not in seen and not seen.append(x)]
-
-    def checkAddCoverage(self, q_new_x : float, q_new_y : float, visible_nodes : list[int]) -> BOOL:
+    def checkAddCoverage(self, qnew : Node, visible_nodes : List[Node]) -> BOOL:
         """
-        半径delta内に他のノードがなければ追加してTrueを返す。
+        半径delta内に他のノードがなければグラフに追加してTrueを返す。
         """
         if len(visible_nodes) == 0: 
-            self.sample_x.append(q_new_x)
-            self.sample_y.append(q_new_y)
+            self.graph.append(qnew)
             return True
         return False
 
-    def checkAddConnectivity(self, q_new_x : float, q_new_y : float, visible_nodes : list[int]) -> BOOL:
+    def checkAddConnectivity(self, qnew : Node, visible_nodes : List[Node]) -> BOOL:
         """
         本当は union find とか使ってグラフの頂点をコンポーネントとして管理しないと...
         本当は二つのノードが属しているコンポーネントが異なる場合にだけ、q_newを使って接続する。
@@ -118,36 +128,28 @@ class MySpars:
         ここをちゃんと実装すれば、checkAddInterfaceの暫定のところは消せるはず。なぜなら、それらがすでに同じグループにあれば、ここでTrueを返して、
         checkAddInterfaceまで行かないからである。
         """
-        is_disconnected_node_found = False
-        if len(visible_nodes) > 1:
-            for i in range(len(visible_nodes)):
-                for j in range(i+1, len(visible_nodes)):
-                    pass
-                    #is_disconnected_node_found = True
+        return False    
 
-            if is_disconnected_node_found:
-                return True
-
-        return False
-
-    def checkAddInterface(self, q_new_x : float, q_new_y : float, visible_nodes : list[int], rr : float, ox : list[float], oy : list[float]) -> BOOL:
+    def checkAddInterface(self, qnew : Node, visible_index : list[int], visible_nodes : List[Node], ox : list[float], oy : list[float], rr : float) -> BOOL:
         """
         本当はvisible nodeのうち最も近い２つを選んでそれらがエッジを持たない時に追加する。ここでは最も近いノードではなくて配列の0, 1を使っている。でも近いは近いはず。
         """
         if len(visible_nodes) > 1 :
             # 直接つながる場合は挿入しない。
-            if not self.is_collision(self.sample_x[visible_nodes[0]], self.sample_y[visible_nodes[0]], self.sample_x[visible_nodes[1]], self.sample_y[visible_nodes[1]], rr, ox, oy):
-                self.edges.append([visible_nodes[0], visible_nodes[1]])
+            if not self.is_collision_path(visible_nodes[0], visible_nodes[1], ox, oy, rr):
+                self.graph[visible_index[0]].addEdge(visible_index[1], 0.0)
+                self.graph[visible_index[1]].addEdge(visible_index[0], 0.0)
                 return True
             else:
-                if not self.is_collision(self.sample_x[visible_nodes[0]], self.sample_y[visible_nodes[0]], q_new_x, q_new_y, rr, ox, oy):
-                    if not self.is_collision(self.sample_x[visible_nodes[1]], self.sample_y[visible_nodes[1]], q_new_x, q_new_y, rr, ox, oy):
+                if not self.is_collision_path(visible_nodes[0], qnew, ox, oy, rr):
+                    if not self.is_collision_path(visible_nodes[1], qnew, ox, oy, rr):
                         if len(visible_nodes) < 3: # 暫定でサンプルノードを追加すれば接続できる場合でも近くにたくさん(2個以上)ある場合は追加しない
-                            # サンプルノードを経由した場合に干渉しない時はサンプルノードを追加する。
-                            self.sample_x.append(q_new_x)
-                            self.sample_y.append(q_new_y)
-                            self.edges.append([len(self.sample_x)-1, visible_nodes[0]])
-                            self.edges.append([len(self.sample_x)-1, visible_nodes[1]])
+                            # サンプルノードを経由すれば干渉しない時はサンプルノードを追加する。
+                            qnew.addEdge(visible_index[0], 0.0) # qnew -> visible_node[0]
+                            qnew.addEdge(visible_index[1], 0.0) # qnew -> visible_node[1]
+                            self.graph.append(qnew)
+                            self.graph[visible_index[0]].addEdge(len(self.graph)-1, 0.0) # visible_node[0] -> qnew
+                            self.graph[visible_index[1]].addEdge(len(self.graph)-1, 0.0) # visible_node[1] -> qnew
                             return True
 
         return False
@@ -164,22 +166,17 @@ class MySpars:
         max_y = max(oy)
         min_y = min(oy)
 
-        is_added_sample = False
         is_sample_found = False
-        sample_x = 0
-        sample_y = 0
+        qnew = Node(0, 0)
 
         for i in range(100): # 1個のノードを追加するのに100回までリトライする。
             # サンプル点を生成する
-            sample_x = (random.random() * (max_x - min_x)) + min_x
-            sample_y = (random.random() * (max_y - min_y)) + min_y
+            qnew.x = (random.random() * (max_x - min_x)) + min_x
+            qnew.y = (random.random() * (max_y - min_y)) + min_y
 
-            # 一番近い干渉物を検索し、一番近い干渉物との距離が rr の外にあるかをチェック
-            min_index, min_dist = self.searchNearestFromList(sample_x, sample_y, ox, oy)
-            if min_dist < rr: # 干渉物に近ければ乱数生成からやり直し。
-                continue
+            if self.is_collision(qnew, ox, oy, rr):
+                continue # 新しく生成したサンプル点が干渉していたら再度乱数生成
             else:
-                # サンプル点候補が見つかった
                 is_sample_found = True
                 break
 
@@ -188,28 +185,31 @@ class MySpars:
             return
 
         # サンプル点に対してdelta内にあるvisible nodes を検索
-        visible_nodes = self.searchVisibleNode(self.sample_x, self.sample_y, sample_x, sample_y, delta, ox, oy, rr)
-        if not self.checkAddCoverage(sample_x, sample_y, visible_nodes):
+        visible_index, visible_nodes = self.searchVisibleNode(qnew, delta, ox, oy, rr)
+        if not self.checkAddCoverage(qnew, visible_nodes):
             # Github上の実装だと全てのvisibleなノードの組み合わせについて、同じコンポーネント（つまり接続されているか）をチェックして、同じコンポーネントにない同士をサンプル点を使って接続している。
             # ただし以下の実装では半径delta内に他のノードがあって、そのノード間を直接接続できれば接続する。
             # この場合、サンプルノードは追加しない。
             # ただし、ノード間をサンプルノードを経由することで接続できればサンプルノードも追加する。
-            # ここは論文に忠実に従うと、visibleなノードが全て繋がっていた場合は、サンプル点から一番近い２つについて操作する。つまり処理を分けるべき。TODO 関数化してくくり出す。
-            if not self.checkAddConnectivity(sample_x, sample_y, visible_nodes):
-                if not self.checkAddInterface(sample_x, sample_y, visible_nodes, rr, ox ,oy):
+            # ここは論文に忠実に従うと、visibleなノードが全て繋がっていた場合は、サンプル点から一番近い２つについて操作する。つまり処理を分けるべき。
+            if not self.checkAddConnectivity(qnew, visible_nodes):
+                if not self.checkAddInterface(qnew, visible_index, visible_nodes, ox ,oy, rr):
                     # TODO ここでやるかどうかも検討が必要。隣接する頂点群(visible_nodes)の1個ずつについて、ある1個のvisible_nodes以外の隣接する頂点とother_nodesとを接続してみて、そのうちの最も長い距離がdelta * stretch factor よりも長くなれば、直接つなぐ。
                     pass
 
-        self.edges = self.get_unique_list(self.edges)
         return
         
     def plot_graph(self):
-        print("edges len : {}".format(len(self.edges)))
-        for edge in self.edges:
-            plt.plot([self.sample_x[edge[0]], self.sample_x[edge[1]]], [self.sample_y[edge[0]], self.sample_y[edge[1]]])
-        # plot
-        plt.plot(self.sample_x, self.sample_y, "ok")
-
+        num_of_edges = 0
+        node_x = [node.x for node in self.graph]
+        node_y = [node.y for node in self.graph]
+        for node in self.graph:
+            num_of_edges += len(node.edges)
+            for edge in node.edges:
+                plt.plot([node.x, self.graph[edge.to].x], [node.y, self.graph[edge.to].y])
+        plt.plot(node_x, node_y, "ok")
+        print("Num of Nodes : {}".format(len(self.graph)))
+        print("Num of Edges : {}".format(num_of_edges))
 
 def main():
     print("{} start !".format(__file__))
