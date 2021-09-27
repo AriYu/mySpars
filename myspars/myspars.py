@@ -48,8 +48,7 @@ class MySpars:
 
         return min_index, min_dist
 
-    @staticmethod
-    def searchNearNode(sample_list_x : list[float], sample_list_y : list[float], target_x : float, target_y : float, radius : float) -> list[int]:
+    def searchVisibleNode(self, sample_list_x : list[float], sample_list_y : list[float], target_x : float, target_y : float, delta : float, ox : list[float], oy : list [float], rr : float) -> list[int]:
         """
         sample_list_x : 探索対象の x座標 のリスト
         sample_list_y : 探索対象の y座標 のリスト
@@ -59,11 +58,16 @@ class MySpars:
         
         return : 探索対象のリストのうち、基準の座標から指定された半径の中にある座標のインデックスのリスト。
         """
+        near_nodes = []
         ans = []
         for i in range(len(sample_list_x)):
             dist = np.hypot(sample_list_x[i] - target_x, sample_list_y[i] - target_y)
-            if (dist < radius):
-                ans.append(i)
+            if (dist < delta):
+                near_nodes.append(i)
+
+        for node in near_nodes:
+            if not self.is_collision(target_x, target_y, sample_list_x[node], sample_list_y[node], rr, ox, oy):
+                ans.append(node)
 
         return ans
 
@@ -91,6 +95,62 @@ class MySpars:
     def get_unique_list(seq):
         seen = []
         return [x for x in seq if x not in seen and not seen.append(x)]
+
+    def checkAddCoverage(self, q_new_x : float, q_new_y : float, visible_nodes : list[int]) -> BOOL:
+        """
+        半径delta内に他のノードがなければ追加してTrueを返す。
+        """
+        if len(visible_nodes) == 0: 
+            self.sample_x.append(q_new_x)
+            self.sample_y.append(q_new_y)
+            return True
+        return False
+
+    def checkAddConnectivity(self, q_new_x : float, q_new_y : float, visible_nodes : list[int]) -> BOOL:
+        """
+        本当は union find とか使ってグラフの頂点をコンポーネントとして管理しないと...
+        本当は二つのノードが属しているコンポーネントが異なる場合にだけ、q_newを使って接続する。
+        本当は二つのノードが属しているコンポーネントが異なっていたら無条件にq_newを頂点に追加し、それらとのエッジも追加する。
+
+        そうすると、障害物と干渉するんじゃない？って思ったけど、そもそもvisible_nodesを探すときに、干渉判定までやっておくのである。
+        つまり、visible node とはサンプル点と直接つなぐことができるっていうこと！！
+
+        ここをちゃんと実装すれば、checkAddInterfaceの暫定のところは消せるはず。なぜなら、それらがすでに同じグループにあれば、ここでTrueを返して、
+        checkAddInterfaceまで行かないからである。
+        """
+        is_disconnected_node_found = False
+        if len(visible_nodes) > 1:
+            for i in range(len(visible_nodes)):
+                for j in range(i+1, len(visible_nodes)):
+                    pass
+                    #is_disconnected_node_found = True
+
+            if is_disconnected_node_found:
+                return True
+
+        return False
+
+    def checkAddInterface(self, q_new_x : float, q_new_y : float, visible_nodes : list[int], rr : float, ox : list[float], oy : list[float]) -> BOOL:
+        """
+        本当はvisible nodeのうち最も近い２つを選んでそれらがエッジを持たない時に追加する。ここでは最も近いノードではなくて配列の0, 1を使っている。でも近いは近いはず。
+        """
+        if len(visible_nodes) > 1 :
+            # 直接つながる場合は挿入しない。
+            if not self.is_collision(self.sample_x[visible_nodes[0]], self.sample_y[visible_nodes[0]], self.sample_x[visible_nodes[1]], self.sample_y[visible_nodes[1]], rr, ox, oy):
+                self.edges.append([visible_nodes[0], visible_nodes[1]])
+                return True
+            else:
+                if not self.is_collision(self.sample_x[visible_nodes[0]], self.sample_y[visible_nodes[0]], q_new_x, q_new_y, rr, ox, oy):
+                    if not self.is_collision(self.sample_x[visible_nodes[1]], self.sample_y[visible_nodes[1]], q_new_x, q_new_y, rr, ox, oy):
+                        if len(visible_nodes) < 3: # 暫定でサンプルノードを追加すれば接続できる場合でも近くにたくさん(2個以上)ある場合は追加しない
+                            # サンプルノードを経由した場合に干渉しない時はサンプルノードを追加する。
+                            self.sample_x.append(q_new_x)
+                            self.sample_y.append(q_new_y)
+                            self.edges.append([len(self.sample_x)-1, visible_nodes[0]])
+                            self.edges.append([len(self.sample_x)-1, visible_nodes[1]])
+                            return True
+
+        return False
 
     def addNode(self, ox : list[float], oy :list[float], rr : float, delta : float) -> None:
         """
@@ -127,48 +187,18 @@ class MySpars:
             # 100回の試行でサンプル点の候補が見つからなかった
             return
 
-        # 候補点に対して、既存のサンプルと半径delta以内にあるかをチェック
-        if len(self.sample_x) == 0: # 1個目は無条件にOK #この条件いらないかも。なぜならelseのsearchNearNodeでother_nodesの数が0のときと同じだから。
-            self.sample_x.append(sample_x)
-            self.sample_y.append(sample_y)
-            is_added_sample = True
-        else :
-            other_nodes = self.searchNearNode(self.sample_x, self.sample_y, sample_x, sample_y, delta)
-            if len(other_nodes) == 0: # 半径delta内に他のノードがなければ追加する。
-                self.sample_x.append(sample_x)
-                self.sample_y.append(sample_y)
-                is_added_sample = True
-            else:
-                # Github上の実装だと全てのvisibleなノードの組み合わせについて、同じコンポーネント（つまり接続されているか）をチェックして、同じコンポーネントにない同士をサンプル点を使って接続している。
-                # ただし以下の実装では半径delta内に他のノードがあって、そのノード間を直接接続できれば接続する。
-                # この場合、サンプルノードは追加しない。
-                # ただし、ノード間をサンプルノードを経由することで接続できればサンプルノードも追加する。
-                # ここは論文に忠実に従うと、visibleなノードが全て繋がっていた場合は、サンプル点から一番近い２つについて操作する。つまり処理を分けるべき。TODO 関数化してくくり出す。
-                for i in range(len(other_nodes)):
-                    for j in range(i+1, len(other_nodes)):
-                        # 直接つながる場合は挿入しない。
-                        if not self.is_collision(self.sample_x[other_nodes[i]], self.sample_y[other_nodes[i]], self.sample_x[other_nodes[j]], self.sample_y[other_nodes[j]], rr, ox, oy):
-                            self.edges.append([other_nodes[i], other_nodes[j]])
-                            #print("i : {}, j : {}".format(other_nodes[i], other_nodes[j]))
-                        else: # Collision
-                            if not self.is_collision(self.sample_x[other_nodes[i]], self.sample_y[other_nodes[i]], sample_x, sample_y, rr, ox, oy):
-                                if not self.is_collision(self.sample_x[other_nodes[j]], self.sample_y[other_nodes[j]], sample_x, sample_y, rr, ox, oy):
-                                    if len(other_nodes) < 3: # 暫定でサンプルノードを追加すれば接続できる場合でも近くにたくさん(2個以上)ある場合は追加しない
-                                        # サンプルノードを経由した場合に干渉しない時はサンプルノードを追加する。
-                                        self.sample_x.append(sample_x)
-                                        self.sample_y.append(sample_y)
-                                        self.edges.append([len(self.sample_x)-1, other_nodes[i]])
-                                        self.edges.append([len(self.sample_x)-1, other_nodes[j]])
-                                        is_added_sample = True
-                                        break
-                                    #print("keiyuten tuika")
-                        # TODO ここでやるかどうかも検討が必要。隣接する頂点群(other_nodes)の1個ずつについて、ある1個のother_nodes以外の隣接する頂点とother_nodesとを接続してみて、そのうちの最も長い距離がdelta * stretch factor よりも長くなれば、直接つなぐ。
-                    if is_added_sample:
-                        break
-
-        if is_added_sample is not True:
-            #print("Failed to add node...")
-            return
+        # サンプル点に対してdelta内にあるvisible nodes を検索
+        visible_nodes = self.searchVisibleNode(self.sample_x, self.sample_y, sample_x, sample_y, delta, ox, oy, rr)
+        if not self.checkAddCoverage(sample_x, sample_y, visible_nodes):
+            # Github上の実装だと全てのvisibleなノードの組み合わせについて、同じコンポーネント（つまり接続されているか）をチェックして、同じコンポーネントにない同士をサンプル点を使って接続している。
+            # ただし以下の実装では半径delta内に他のノードがあって、そのノード間を直接接続できれば接続する。
+            # この場合、サンプルノードは追加しない。
+            # ただし、ノード間をサンプルノードを経由することで接続できればサンプルノードも追加する。
+            # ここは論文に忠実に従うと、visibleなノードが全て繋がっていた場合は、サンプル点から一番近い２つについて操作する。つまり処理を分けるべき。TODO 関数化してくくり出す。
+            if not self.checkAddConnectivity(sample_x, sample_y, visible_nodes):
+                if not self.checkAddInterface(sample_x, sample_y, visible_nodes, rr, ox ,oy):
+                    # TODO ここでやるかどうかも検討が必要。隣接する頂点群(visible_nodes)の1個ずつについて、ある1個のvisible_nodes以外の隣接する頂点とother_nodesとを接続してみて、そのうちの最も長い距離がdelta * stretch factor よりも長くなれば、直接つなぐ。
+                    pass
 
         self.edges = self.get_unique_list(self.edges)
         return
