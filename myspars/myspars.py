@@ -3,9 +3,7 @@ This is my SPARS algorithm, which only implement visible method.
 """
 
 from ctypes.wintypes import BOOL
-from lib2to3.pytree import Node
 import math
-from re import M
 import numpy as np
 import random
 import matplotlib.pyplot as plt
@@ -73,13 +71,16 @@ class MySpars:
         for i, node in enumerate(self.graph):
             dist = np.hypot(node.x - qnew.x, node.y - qnew.y)
             if (dist < delta):
-                if not self.is_collision_path(qnew, node, ox, oy, rr): # そのうち、qnewと接続できるものを検索
+                if not self.isCollisionPath(qnew, node, ox, oy, rr): # そのうち、qnewと接続できるものを検索
                     ans_index.append(i)
                     ans_nodes.append(node)
 
         return (ans_index, ans_nodes)
 
-    def is_collision_path(self, p0 : Node, p1 : Node, ox : list[float], oy : list[float], rr : float) -> BOOL:
+    def isCollisionPath(self, p0 : Node, p1 : Node, ox : list[float], oy : list[float], rr : float) -> BOOL:
+        """
+        p0 と p1 間を rr の長さずつ、チェックし、ox, oy と干渉していないかをチェックする。干渉していればTrueを返す。
+        """
         dx = p1.x - p0.x
         dy = p1.y - p0.y
         yaw = math.atan2(dy, dx)
@@ -100,7 +101,10 @@ class MySpars:
         
         return False # no collide           
 
-    def is_collision(self, p : Node, ox : list[float], oy : list[float], rr : float) -> BOOL:
+    def isCollision(self, p : Node, ox : list[float], oy : list[float], rr : float) -> BOOL:
+        """
+        半径rr内にox, oy があれば、True（Collide）を返す。
+        """
         _, min_dist = self.searchNearestFromList(p.x, p.y, ox, oy)
         if min_dist < rr: 
             return True # collide
@@ -136,13 +140,19 @@ class MySpars:
         """
         if len(visible_nodes) > 1 :
             # 直接つながる場合は挿入しない。
-            if not self.is_collision_path(visible_nodes[0], visible_nodes[1], ox, oy, rr):
-                self.graph[visible_index[0]].addEdge(visible_index[1], 0.0)
-                self.graph[visible_index[1]].addEdge(visible_index[0], 0.0)
+            if not self.isCollisionPath(visible_nodes[0], visible_nodes[1], ox, oy, rr):
+                v0_to = [edge.to for edge in self.graph[visible_index[0]].edges]
+                v1_to = [edge.to for edge in self.graph[visible_index[1]].edges]
+                if visible_index[1] not in v0_to:
+                    # visble_index[0]のtoにvisible_index[1]が無ければ追加する。
+                    self.graph[visible_index[0]].addEdge(visible_index[1], 0.0)
+                if visible_index[0] not in v1_to:
+                    # visble_index[1]のtoにvisible_index[0]が無ければ追加する。
+                    self.graph[visible_index[1]].addEdge(visible_index[0], 0.0)
                 return True
             else:
-                if not self.is_collision_path(visible_nodes[0], qnew, ox, oy, rr):
-                    if not self.is_collision_path(visible_nodes[1], qnew, ox, oy, rr):
+                if not self.isCollisionPath(visible_nodes[0], qnew, ox, oy, rr):
+                    if not self.isCollisionPath(visible_nodes[1], qnew, ox, oy, rr):
                         if len(visible_nodes) < 3: # 暫定でサンプルノードを追加すれば接続できる場合でも近くにたくさん(2個以上)ある場合は追加しない
                             # サンプルノードを経由すれば干渉しない時はサンプルノードを追加する。
                             qnew.addEdge(visible_index[0], 0.0) # qnew -> visible_node[0]
@@ -153,6 +163,61 @@ class MySpars:
                             return True
 
         return False
+
+    def checkAddPath(self, visible_index : list[int], stretch_factor : float, ox : list[float], oy : list[float], rr : float):
+        """
+        qnewのvisible_nodesについてそれの2個先と直接繋いでみて、その距離がストレッチファクターを考慮しても短いかどうかをチェックする
+        直接繋いだ方がよければ直接つなぐ。
+        """
+        for index in visible_index:
+            base_node = self.graph[index]
+            base_node_edges = [edge.to for edge in base_node.edges]
+            adjacent_nodes = [self.graph[edge.to] for edge in base_node.edges]
+            for adj_node in adjacent_nodes:
+                for edge in adj_node.edges: # 隣接点のエッジについて
+                    if edge.to not in base_node_edges: # 隣接点のエッジのtoがbase_nodeのtoに含まれていない、つまり隣接点の隣接点とbase_nodeが直接繋がっていない場合
+                        dist_on_graph = (np.hypot(base_node.x - adj_node.x, base_node.y - adj_node.y) + np.hypot(adj_node.x - self.graph[edge.to].x, adj_node.y - self.graph[edge.to].y)) *  stretch_factor
+                        dist_direct = np.hypot(base_node.x - self.graph[edge.to].x, base_node.y - self.graph[edge.to].y)
+                        if (dist_on_graph > dist_direct): # 直接繋いだ方が短くて、
+                            if not self.isCollisionPath(base_node, self.graph[edge.to], ox, oy, rr): # 干渉しないならば、
+                                self.graph[index].addEdge(edge.to, 0)
+                                self.graph[edge.to].addEdge(index, 0)
+
+    @staticmethod
+    def sampler(center : Node, x_max : float, x_min : float, y_max : float, y_min : float, delta : float) -> Node:
+        """
+        - center を中心に半径delta以内にサンプルする
+        refer iPad notes; Sample Uniform Near and ompl::base::RealVectorStateSampler::sampleUniformNear
+        """
+        ans = Node(0, 0)
+        ans.x = random.uniform(np.max([x_min, center.x - delta]), np.min([center.x + delta, x_max]))
+        ans.y = random.uniform(np.max([y_min, center.y - delta]), np.min([center.y + delta, y_max]))
+        return ans
+
+    def findCloseRepresentatives(self, qnew : Node, qrep : int, delta : float, max_x : float, min_x : float, max_y : float, min_y : float, ox : list[float], oy : list[float], rr : float):
+        """
+        - qnewのrepresentiveと異なるrepresentiveが見つかったら返却リストに入れる
+        - workに対するrepresentiveが見つからなかったら、workをNodeとして追加してbreakして終了
+        """
+        near_sample_points = 2 # same to dimention
+        close_representative = []
+        for i in range(near_sample_points):
+            while True:
+                work = self.sampler(qnew, max_x, min_x, max_y, min_y, delta)
+                if not self.isCollision(work, ox, oy, rr):
+                    break
+            candidates_index, candidates = self.searchVisibleNode(work, delta, ox, oy, rr)
+            representative = -1
+            for i, node in enumerate(candidates):
+                if self.isCollisionPath(work, node, ox, oy, rr):
+                    representative = candidates_index[i]
+                    break
+            if representative is not -1 and representative != qrep:
+                if not representative in close_representative:
+                    close_representative.append(representative)
+            else:
+                self.graph.append(work)
+        return close_representative
 
     def addNode(self, ox : list[float], oy :list[float], rr : float, delta : float) -> None:
         """
@@ -174,7 +239,7 @@ class MySpars:
             qnew.x = (random.random() * (max_x - min_x)) + min_x
             qnew.y = (random.random() * (max_y - min_y)) + min_y
 
-            if self.is_collision(qnew, ox, oy, rr):
+            if self.isCollision(qnew, ox, oy, rr):
                 continue # 新しく生成したサンプル点が干渉していたら再度乱数生成
             else:
                 is_sample_found = True
@@ -194,24 +259,30 @@ class MySpars:
             # ここは論文に忠実に従うと、visibleなノードが全て繋がっていた場合は、サンプル点から一番近い２つについて操作する。つまり処理を分けるべき。
             if not self.checkAddConnectivity(qnew, visible_nodes):
                 if not self.checkAddInterface(qnew, visible_index, visible_nodes, ox ,oy, rr):
-                    # TODO ここでやるかどうかも検討が必要。隣接する頂点群(visible_nodes)の1個ずつについて、ある1個のvisible_nodes以外の隣接する頂点とother_nodesとを接続してみて、そのうちの最も長い距離がdelta * stretch factor よりも長くなれば、直接つなぐ。
-                    pass
-
+                    representatives = self.findCloseRepresentatives(qnew, visible_index[0], delta, max_x, min_x, max_y, min_y, ox, oy, rr)
+                    if len(representatives) != 0:
+                        # TODO update_pair_points()
+                        pass
+                    self.checkAddPath(visible_index, 0.6, ox, oy, rr)
+                    for rep in representatives:
+                        self.checkAddPath(rep, 0.6, ox, oy, rr)        
         return
         
-    def plot_graph(self):
+    def plotGraph(self):
         num_of_edges = 0
         node_x = [node.x for node in self.graph]
         node_y = [node.y for node in self.graph]
-        for node in self.graph:
+        for i, node in enumerate(self.graph):
             num_of_edges += len(node.edges)
+            print("[{}] : {}".format(i, len(node.edges)))
             for edge in node.edges:
                 plt.plot([node.x, self.graph[edge.to].x], [node.y, self.graph[edge.to].y])
-        plt.plot(node_x, node_y, "ok")
+        #plt.plot(node_x, node_y, "ok")
         print("Num of Nodes : {}".format(len(self.graph)))
         print("Num of Edges : {}".format(num_of_edges))
 
 def main():
+    random.seed(1)
     print("{} start !".format(__file__))
 
     sx = 10.0
@@ -250,11 +321,11 @@ def main():
         plt.axis("equal")
 
     spars_planner = MySpars()
-    for i in range(1000):
+    for i in range(10000):
         print("adding node ... {}".format(i))
-        spars_planner.addNode(ox, oy, 2.0, 6.0)
+        spars_planner.addNode(ox, oy, 2.0, 4.0)
 
-    spars_planner.plot_graph()
+    spars_planner.plotGraph()
 
     if show_animation:
         #plt.plot(rx, ry, "-r")
