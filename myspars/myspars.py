@@ -2,7 +2,6 @@
 This is my SPARS algorithm, which only implement visible method.
 """
 
-from ctypes.wintypes import BOOL
 import math
 import numpy as np
 import random
@@ -34,10 +33,79 @@ class Node:
     def __str__(self) -> str:
         return str(self.x) + ", " + str(self.y)
 
+class UnionFind(object):
+    """
+    Union find
+    """
+    def __init__(self):
+        """
+        初期化
+        """
+        self.par : dict[int, int] = {}
+        self.siz : dict[int, int] = {}
+
+    def add(self, index : int):
+        self.par[index] = -1
+        self.siz[index] = 1
+
+    def root(self, x : int) -> int:
+        """
+        根を求める
+        """
+        if self.par[x] == -1:
+            return x # x が根の場合は x を返す
+        else:
+            self.par[x] = self.root(self.par[x])
+            return self.par[x]
+
+    def issame(self, x : int, y : int) -> bool:
+        """
+        x と y が同じグループに属するかどうか（根が一致するかどうか）
+        """
+        return (self.root(x) == self.root(y))
+
+    def unite(self, x : int, y : int) -> bool:
+        """
+        x を含むグループと y を含むグループとを併合する
+        """
+        # x と y をそれぞれ根まで移動する
+        x = self.root(x)
+        y = self.root(y)
+
+        # すでに同じグループの時は何もしない
+        if (x == y):
+            return False
+
+        # union by size (y側のサイズが小さくなるようにする)
+        if (self.siz[x] < self.siz[y]):
+            self.swap(x, y)
+
+        # y を x の子とする
+        self.par[y] = x
+        self.siz[x] += self.siz[y]
+        return True
+
+    def size(self, x : int) -> int:
+        """
+        x を含むグループのサイズ
+        """
+        return self.siz[self.root(x)]
+
+    @staticmethod
+    def swap(x : int, y : int):
+        """
+        x と y を入れ替える
+        """
+        tmp = x
+        x = y
+        y = tmp
+        return
+
 class MySpars:
 
     def __init__(self) -> None:
         self.graph : List[Node] = []
+        self.union_find: UnionFind = UnionFind()
 
     @staticmethod
     def searchNearestFromList(sample_x : float, sample_y : float, ox : list[float], oy : list[float]) -> Tuple[int, float] :
@@ -63,6 +131,8 @@ class MySpars:
 
         ans1 : visible な node の index
         ans2 : visible な node の コピー
+
+        qnewに対する visible node というのは干渉チェックまで終わっているnodeなのでqnewを経由すれば、干渉チェックなしに接続できる。
         """
         ans_index : list[int] = []
         ans_nodes : List[Node] = []
@@ -77,7 +147,7 @@ class MySpars:
 
         return (ans_index, ans_nodes)
 
-    def isCollisionPath(self, p0 : Node, p1 : Node, ox : list[float], oy : list[float], rr : float) -> BOOL:
+    def isCollisionPath(self, p0 : Node, p1 : Node, ox : list[float], oy : list[float], rr : float) -> bool:
         """
         p0 と p1 間を rr の長さずつ、チェックし、ox, oy と干渉していないかをチェックする。干渉していればTrueを返す。
         """
@@ -101,7 +171,7 @@ class MySpars:
         
         return False # no collide           
 
-    def isCollision(self, p : Node, ox : list[float], oy : list[float], rr : float) -> BOOL:
+    def isCollision(self, p : Node, ox : list[float], oy : list[float], rr : float) -> bool:
         """
         半径rr内にox, oy があれば、True（Collide）を返す。
         """
@@ -111,30 +181,43 @@ class MySpars:
         else:
             return False # no collide
 
-    def checkAddCoverage(self, qnew : Node, visible_nodes : List[Node]) -> BOOL:
+    def checkAddCoverage(self, qnew : Node, visible_nodes : List[Node]) -> bool:
         """
         半径delta内に他のノードがなければグラフに追加してTrueを返す。
         """
         if len(visible_nodes) == 0: 
             self.graph.append(qnew)
+            self.union_find.add(len(self.graph) - 1)
             return True
         return False
 
-    def checkAddConnectivity(self, qnew : Node, visible_nodes : List[Node]) -> BOOL:
+    def checkAddConnectivity(self, qnew : Node, visible_index : list[int]) -> bool:
         """
-        本当は union find とか使ってグラフの頂点をコンポーネントとして管理しないと...
-        本当は二つのノードが属しているコンポーネントが異なる場合にだけ、q_newを使って接続する。
-        本当は二つのノードが属しているコンポーネントが異なっていたら無条件にq_newを頂点に追加し、それらとのエッジも追加する。
+        qnewに対するvisible node に対して、ある visible node が他の visible node と同じグラフにあるかをチェックし、
+        異なるグラフ上にある visible node があれば、qnewを追加して接続する。
+        もう一つ重要な役割がある。それは、ここで visible node が同じグラフ上であれば、Falseを返すということ。
+        つまり、ここで繋がるグラフが異なるグラフである場合に、この後の、checkAddInterfaceを呼ぶことになる。
+        これにより、無限にショートカットパスを作らないようになる。（ショートカットパスを作ろうとするのは異なるグラフを接続した時だけ。）
 
-        そうすると、障害物と干渉するんじゃない？って思ったけど、そもそもvisible_nodesを探すときに、干渉判定までやっておくのである。
-        つまり、visible node とはサンプル点と直接つなぐことができるっていうこと！！
-
-        ここをちゃんと実装すれば、checkAddInterfaceの暫定のところは消せるはず。なぜなら、それらがすでに同じグループにあれば、ここでTrueを返して、
-        checkAddInterfaceまで行かないからである。
+        visible node が 1個しかない場合は、接続しない。なぜなら、飛び出るようなグラフになってしまうため。
         """
+        if len(visible_index) > 1:
+            disconnected : list[int] = []
+            for i in range (len(visible_index)):
+                for j in range(i+1, len(visible_index), 1):
+                    if not self.union_find.issame(visible_index[i], visible_index[j]):
+                        disconnected.append(visible_index[i])
+                        disconnected.append(visible_index[j])
+            if len(disconnected) > 0:
+                self.graph.append(qnew)
+                self.union_find.add(len(self.graph) - 1)
+                for index in disconnected:
+                    self.graph[len(self.graph) - 1].addEdge(index, 0)
+                    self.union_find.unite(len(self.graph) - 1, index)
+                return True
         return False    
 
-    def checkAddInterface(self, qnew : Node, visible_index : list[int], visible_nodes : List[Node], ox : list[float], oy : list[float], rr : float) -> BOOL:
+    def checkAddInterface(self, qnew : Node, visible_index : list[int], visible_nodes : List[Node], ox : list[float], oy : list[float], rr : float) -> bool:
         """
         本当はvisible nodeのうち最も近い２つを選んでそれらがエッジを持たない時に追加する。ここでは最も近いノードではなくて配列の0, 1を使っている。でも近いは近いはず。
         """
@@ -146,42 +229,47 @@ class MySpars:
                 if visible_index[1] not in v0_to:
                     # visble_index[0]のtoにvisible_index[1]が無ければ追加する。
                     self.graph[visible_index[0]].addEdge(visible_index[1], 0.0)
+                    self.union_find.unite(visible_index[1], visible_index[0])
                 if visible_index[0] not in v1_to:
                     # visble_index[1]のtoにvisible_index[0]が無ければ追加する。
                     self.graph[visible_index[1]].addEdge(visible_index[0], 0.0)
+                    self.union_find.unite(visible_index[0], visible_index[1])
                 return True
             else:
                 if not self.isCollisionPath(visible_nodes[0], qnew, ox, oy, rr):
                     if not self.isCollisionPath(visible_nodes[1], qnew, ox, oy, rr):
-                        if len(visible_nodes) < 3: # 暫定でサンプルノードを追加すれば接続できる場合でも近くにたくさん(2個以上)ある場合は追加しない
-                            # サンプルノードを経由すれば干渉しない時はサンプルノードを追加する。
-                            qnew.addEdge(visible_index[0], 0.0) # qnew -> visible_node[0]
-                            qnew.addEdge(visible_index[1], 0.0) # qnew -> visible_node[1]
-                            self.graph.append(qnew)
-                            self.graph[visible_index[0]].addEdge(len(self.graph)-1, 0.0) # visible_node[0] -> qnew
-                            self.graph[visible_index[1]].addEdge(len(self.graph)-1, 0.0) # visible_node[1] -> qnew
-                            return True
+                        #if len(visible_nodes) < 3: # 暫定でサンプルノードを追加すれば接続できる場合でも近くにたくさん(2個以上)ある場合は追加しない
+                        # サンプルノードを経由すれば干渉しない時はサンプルノードを追加する。
+                        qnew.addEdge(visible_index[0], 0.0) # qnew -> visible_node[0]
+                        qnew.addEdge(visible_index[1], 0.0) # qnew -> visible_node[1]
+                        self.graph.append(qnew)
+                        self.union_find.add(len(self.graph) - 1)
+                        self.union_find.unite(len(self.graph) - 1, visible_index[0])
+                        self.union_find.unite(len(self.graph) - 1, visible_index[1])
+                        self.graph[visible_index[0]].addEdge(len(self.graph)-1, 0.0) # visible_node[0] -> qnew
+                        self.graph[visible_index[1]].addEdge(len(self.graph)-1, 0.0) # visible_node[1] -> qnew
+                        return True
 
         return False
 
-    def checkAddPath(self, visible_index : list[int], stretch_factor : float, ox : list[float], oy : list[float], rr : float):
+    def checkAddPath(self, visible_index : int, stretch_factor : float, ox : list[float], oy : list[float], rr : float):
         """
         qnewのvisible_nodesについてそれの2個先と直接繋いでみて、その距離がストレッチファクターを考慮しても短いかどうかをチェックする
         直接繋いだ方がよければ直接つなぐ。
         """
-        for index in visible_index:
-            base_node = self.graph[index]
-            base_node_edges = [edge.to for edge in base_node.edges]
-            adjacent_nodes = [self.graph[edge.to] for edge in base_node.edges]
-            for adj_node in adjacent_nodes:
-                for edge in adj_node.edges: # 隣接点のエッジについて
-                    if edge.to not in base_node_edges: # 隣接点のエッジのtoがbase_nodeのtoに含まれていない、つまり隣接点の隣接点とbase_nodeが直接繋がっていない場合
-                        dist_on_graph = (np.hypot(base_node.x - adj_node.x, base_node.y - adj_node.y) + np.hypot(adj_node.x - self.graph[edge.to].x, adj_node.y - self.graph[edge.to].y)) *  stretch_factor
-                        dist_direct = np.hypot(base_node.x - self.graph[edge.to].x, base_node.y - self.graph[edge.to].y)
-                        if (dist_on_graph > dist_direct): # 直接繋いだ方が短くて、
-                            if not self.isCollisionPath(base_node, self.graph[edge.to], ox, oy, rr): # 干渉しないならば、
-                                self.graph[index].addEdge(edge.to, 0)
-                                self.graph[edge.to].addEdge(index, 0)
+        base_node = self.graph[visible_index]
+        base_node_edges = [edge.to for edge in base_node.edges]
+        adjacent_nodes = [self.graph[edge.to] for edge in base_node.edges]
+        for adj_node in adjacent_nodes:
+            for edge in adj_node.edges: # 隣接点のエッジについて
+                if edge.to not in base_node_edges: # 隣接点のエッジのtoがbase_nodeのtoに含まれていない、つまり隣接点の隣接点とbase_nodeが直接繋がっていない場合
+                    dist_on_graph = (np.hypot(base_node.x - adj_node.x, base_node.y - adj_node.y) + np.hypot(adj_node.x - self.graph[edge.to].x, adj_node.y - self.graph[edge.to].y)) *  stretch_factor
+                    dist_direct = np.hypot(base_node.x - self.graph[edge.to].x, base_node.y - self.graph[edge.to].y)
+                    if (dist_on_graph > dist_direct): # 直接繋いだ方が短くて、
+                        if not self.isCollisionPath(base_node, self.graph[edge.to], ox, oy, rr): # 干渉しないならば、
+                            self.graph[visible_index].addEdge(edge.to, 0)
+                            self.graph[edge.to].addEdge(visible_index, 0)
+                            self.union_find.unite(visible_index, edge.to)
 
     @staticmethod
     def sampler(center : Node, x_max : float, x_min : float, y_max : float, y_min : float, delta : float) -> Node:
@@ -209,14 +297,15 @@ class MySpars:
             candidates_index, candidates = self.searchVisibleNode(work, delta, ox, oy, rr)
             representative = -1
             for i, node in enumerate(candidates):
-                if self.isCollisionPath(work, node, ox, oy, rr):
+                if not self.isCollisionPath(work, node, ox, oy, rr):
                     representative = candidates_index[i]
                     break
-            if representative is not -1 and representative != qrep:
+            if representative != -1 and representative != qrep:
                 if not representative in close_representative:
                     close_representative.append(representative)
             else:
                 self.graph.append(work)
+                self.union_find.add(len(self.graph) - 1)
         return close_representative
 
     def addNode(self, ox : list[float], oy :list[float], rr : float, delta : float) -> None:
@@ -252,18 +341,13 @@ class MySpars:
         # サンプル点に対してdelta内にあるvisible nodes を検索
         visible_index, visible_nodes = self.searchVisibleNode(qnew, delta, ox, oy, rr)
         if not self.checkAddCoverage(qnew, visible_nodes):
-            # Github上の実装だと全てのvisibleなノードの組み合わせについて、同じコンポーネント（つまり接続されているか）をチェックして、同じコンポーネントにない同士をサンプル点を使って接続している。
-            # ただし以下の実装では半径delta内に他のノードがあって、そのノード間を直接接続できれば接続する。
-            # この場合、サンプルノードは追加しない。
-            # ただし、ノード間をサンプルノードを経由することで接続できればサンプルノードも追加する。
-            # ここは論文に忠実に従うと、visibleなノードが全て繋がっていた場合は、サンプル点から一番近い２つについて操作する。つまり処理を分けるべき。
-            if not self.checkAddConnectivity(qnew, visible_nodes):
+            if not self.checkAddConnectivity(qnew, visible_index):
                 if not self.checkAddInterface(qnew, visible_index, visible_nodes, ox ,oy, rr):
                     representatives = self.findCloseRepresentatives(qnew, visible_index[0], delta, max_x, min_x, max_y, min_y, ox, oy, rr)
                     if len(representatives) != 0:
                         # TODO update_pair_points()
                         pass
-                    self.checkAddPath(visible_index, 0.6, ox, oy, rr)
+                    self.checkAddPath(visible_index[0], 0.6, ox, oy, rr)
                     for rep in representatives:
                         self.checkAddPath(rep, 0.6, ox, oy, rr)        
         return
@@ -321,7 +405,7 @@ def main():
         plt.axis("equal")
 
     spars_planner = MySpars()
-    for i in range(10000):
+    for i in range(5000):
         print("adding node ... {}".format(i))
         spars_planner.addNode(ox, oy, 2.0, 4.0)
 
