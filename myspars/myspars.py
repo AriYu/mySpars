@@ -101,33 +101,85 @@ class UnionFind(object):
         y = tmp
         return
 
+def searchNearestFromList(sample_x : float, sample_y : float, ox : list[float], oy : list[float]) -> Tuple[int, float] :
+    min_index = 0
+    min_dist = np.hypot(ox[0] - sample_x, oy[0] - sample_y)
+    for i in range(len(ox)):
+        dist = np.hypot(ox[i] - sample_x, oy[i] - sample_y)
+        if (dist < min_dist):
+            min_dist = dist
+            min_index = i
+
+    #print("nearest index : {}, dist : {}".format(min_index, min_dist))
+
+    return min_index, min_dist
+
+class CollisionChecker(object):
+    """
+    Collision checker for path planning
+    """
+    def __init__(self,  ox : list[float], oy :list[float], rr : float) -> None:
+        """
+        ox : The list for x of obstacles
+        oy : The list for y of obstacles
+        rr : The thresold to determine collide with obstacles
+        """
+        self.ox = ox
+        self.oy = oy
+        self.rr = rr
+        self.max_x : float = max(ox)
+        self.min_x : float = min(ox)
+        self.max_y : float = max(oy)
+        self.min_y : float = min(oy)
+
+    def isCollision(self, p : Node) -> bool:
+        """
+        If there are ox or oy in radius rr, return True (colliding)
+        """
+        _, min_dist = searchNearestFromList(p.x, p.y, self.ox, self.oy)
+        if min_dist < self.rr: 
+            return True # collide
+        else:
+            return False # no collide
+
+
+    def isCollisionPath(self, p0 : Node, p1 : Node) -> bool:
+        """
+        p0, p1 : the vertexes which compromize a line
+        Check collision between the line and ox, oy by rr.
+        If there is collision, return True.
+        """
+        dx = p1.x - p0.x
+        dy = p1.y - p0.y
+        yaw = math.atan2(dy, dx)
+        d = np.hypot(dx, dy)
+
+        D = self.rr
+        n_step = round(d / D)
+
+        x = p0.x
+        y = p0.y
+
+        for i in range(n_step):
+            _, dist = searchNearestFromList(x, y, self.ox, self.oy)
+            if dist <= self.rr:
+                return True # collide
+            x += D * math.cos(yaw)
+            y += D * math.sin(yaw)
+        
+        return False # no collide           
+
 class MySpars:
 
-    def __init__(self) -> None:
+    def __init__(self, collision_checker : CollisionChecker) -> None:
         self.graph : List[Node] = []
         self.union_find: UnionFind = UnionFind()
+        self.collision_checker = collision_checker
 
-    @staticmethod
-    def searchNearestFromList(sample_x : float, sample_y : float, ox : list[float], oy : list[float]) -> Tuple[int, float] :
-        min_index = 0
-        min_dist = np.hypot(ox[0] - sample_x, oy[0] - sample_y)
-        for i in range(len(ox)):
-            dist = np.hypot(ox[i] - sample_x, oy[i] - sample_y)
-            if (dist < min_dist):
-                min_dist = dist
-                min_index = i
-
-        #print("nearest index : {}, dist : {}".format(min_index, min_dist))
-
-        return min_index, min_dist
-
-    def searchVisibleNode(self, qnew : Node, delta : float, ox : float, oy : float, rr : float) -> Tuple[list[int], List[Node]]:
+    def searchVisibleNode(self, qnew : Node, delta : float) -> Tuple[list[int], List[Node]]:
         """
         qnew : 新しいサンプル点
         delta : visibleの範囲
-        ox : 障害物のx座標のリスト
-        oy : 障害物のy座標のリスト
-        rr : 障害物とどれくらい近いと干渉と判定するかの距離
 
         ans1 : visible な node の index
         ans2 : visible な node の コピー
@@ -141,45 +193,11 @@ class MySpars:
         for i, node in enumerate(self.graph):
             dist = np.hypot(node.x - qnew.x, node.y - qnew.y)
             if (dist < delta):
-                if not self.isCollisionPath(qnew, node, ox, oy, rr): # そのうち、qnewと接続できるものを検索
+                if not self.collision_checker.isCollisionPath(qnew, node): # そのうち、qnewと接続できるものを検索
                     ans_index.append(i)
                     ans_nodes.append(node)
 
         return (ans_index, ans_nodes)
-
-    def isCollisionPath(self, p0 : Node, p1 : Node, ox : list[float], oy : list[float], rr : float) -> bool:
-        """
-        p0 と p1 間を rr の長さずつ、チェックし、ox, oy と干渉していないかをチェックする。干渉していればTrueを返す。
-        """
-        dx = p1.x - p0.x
-        dy = p1.y - p0.y
-        yaw = math.atan2(dy, dx)
-        d = np.hypot(dx, dy)
-
-        D = rr
-        n_step = round(d / D)
-
-        x = p0.x
-        y = p0.y
-
-        for i in range(n_step):
-            _, dist = self.searchNearestFromList(x, y, ox, oy)
-            if dist <= rr:
-                return True # collide
-            x += D * math.cos(yaw)
-            y += D * math.sin(yaw)
-        
-        return False # no collide           
-
-    def isCollision(self, p : Node, ox : list[float], oy : list[float], rr : float) -> bool:
-        """
-        半径rr内にox, oy があれば、True（Collide）を返す。
-        """
-        _, min_dist = self.searchNearestFromList(p.x, p.y, ox, oy)
-        if min_dist < rr: 
-            return True # collide
-        else:
-            return False # no collide
 
     def checkAddCoverage(self, qnew : Node, visible_nodes : List[Node]) -> bool:
         """
@@ -217,13 +235,13 @@ class MySpars:
                 return True
         return False    
 
-    def checkAddInterface(self, qnew : Node, visible_index : list[int], visible_nodes : List[Node], ox : list[float], oy : list[float], rr : float) -> bool:
+    def checkAddInterface(self, qnew : Node, visible_index : list[int], visible_nodes : List[Node]) -> bool:
         """
         本当はvisible nodeのうち最も近い２つを選んでそれらがエッジを持たない時に追加する。ここでは最も近いノードではなくて配列の0, 1を使っている。でも近いは近いはず。
         """
         if len(visible_nodes) > 1 :
             # 直接つながる場合は挿入しない。
-            if not self.isCollisionPath(visible_nodes[0], visible_nodes[1], ox, oy, rr):
+            if not self.collision_checker.isCollisionPath(visible_nodes[0], visible_nodes[1]):
                 v0_to = [edge.to for edge in self.graph[visible_index[0]].edges]
                 v1_to = [edge.to for edge in self.graph[visible_index[1]].edges]
                 if visible_index[1] not in v0_to:
@@ -236,8 +254,8 @@ class MySpars:
                     self.union_find.unite(visible_index[0], visible_index[1])
                 return True
             else:
-                if not self.isCollisionPath(visible_nodes[0], qnew, ox, oy, rr):
-                    if not self.isCollisionPath(visible_nodes[1], qnew, ox, oy, rr):
+                if not self.collision_checker.isCollisionPath(visible_nodes[0], qnew):
+                    if not self.collision_checker.isCollisionPath(visible_nodes[1], qnew):
                         #if len(visible_nodes) < 3: # 暫定でサンプルノードを追加すれば接続できる場合でも近くにたくさん(2個以上)ある場合は追加しない
                         # サンプルノードを経由すれば干渉しない時はサンプルノードを追加する。
                         qnew.addEdge(visible_index[0], 0.0) # qnew -> visible_node[0]
@@ -252,7 +270,7 @@ class MySpars:
 
         return False
 
-    def checkAddPath(self, visible_index : int, stretch_factor : float, ox : list[float], oy : list[float], rr : float):
+    def checkAddPath(self, visible_index : int, stretch_factor : float):
         """
         qnewのvisible_nodesについてそれの2個先と直接繋いでみて、その距離がストレッチファクターを考慮しても短いかどうかをチェックする
         直接繋いだ方がよければ直接つなぐ。
@@ -266,23 +284,22 @@ class MySpars:
                     dist_on_graph = (np.hypot(base_node.x - adj_node.x, base_node.y - adj_node.y) + np.hypot(adj_node.x - self.graph[edge.to].x, adj_node.y - self.graph[edge.to].y)) *  stretch_factor
                     dist_direct = np.hypot(base_node.x - self.graph[edge.to].x, base_node.y - self.graph[edge.to].y)
                     if (dist_on_graph > dist_direct): # 直接繋いだ方が短くて、
-                        if not self.isCollisionPath(base_node, self.graph[edge.to], ox, oy, rr): # 干渉しないならば、
+                        if not self.collision_checker.isCollisionPath(base_node, self.graph[edge.to]): # 干渉しないならば、
                             self.graph[visible_index].addEdge(edge.to, 0)
                             self.graph[edge.to].addEdge(visible_index, 0)
                             self.union_find.unite(visible_index, edge.to)
 
-    @staticmethod
-    def sampler(center : Node, x_max : float, x_min : float, y_max : float, y_min : float, delta : float) -> Node:
+    def sampler(self, center : Node, delta : float) -> Node:
         """
         - center を中心に半径delta以内にサンプルする
         refer iPad notes; Sample Uniform Near and ompl::base::RealVectorStateSampler::sampleUniformNear
         """
         ans = Node(0, 0)
-        ans.x = random.uniform(np.max([x_min, center.x - delta]), np.min([center.x + delta, x_max]))
-        ans.y = random.uniform(np.max([y_min, center.y - delta]), np.min([center.y + delta, y_max]))
+        ans.x = random.uniform(np.max([self.collision_checker.min_x, center.x - delta]), np.min([center.x + delta, self.collision_checker.max_x]))
+        ans.y = random.uniform(np.max([self.collision_checker.min_y, center.y - delta]), np.min([center.y + delta, self.collision_checker.max_y]))
         return ans
 
-    def findCloseRepresentatives(self, qnew : Node, qrep : int, delta : float, max_x : float, min_x : float, max_y : float, min_y : float, ox : list[float], oy : list[float], rr : float):
+    def findCloseRepresentatives(self, qnew : Node, qrep : int, delta : float):
         """
         - qnewのrepresentiveと異なるrepresentiveが見つかったら返却リストに入れる
         - workに対するrepresentiveが見つからなかったら、workをNodeとして追加してbreakして終了
@@ -291,13 +308,13 @@ class MySpars:
         close_representative = []
         for i in range(near_sample_points):
             while True:
-                work = self.sampler(qnew, max_x, min_x, max_y, min_y, delta)
-                if not self.isCollision(work, ox, oy, rr):
+                work = self.sampler(qnew, delta)
+                if not self.collision_checker.isCollision(work):
                     break
-            candidates_index, candidates = self.searchVisibleNode(work, delta, ox, oy, rr)
+            candidates_index, candidates = self.searchVisibleNode(work, delta)
             representative = -1
             for i, node in enumerate(candidates):
-                if not self.isCollisionPath(work, node, ox, oy, rr):
+                if not self.collision_checker.isCollisionPath(work, node):
                     representative = candidates_index[i]
                     break
             if representative != -1 and representative != qrep:
@@ -308,27 +325,20 @@ class MySpars:
                 self.union_find.add(len(self.graph) - 1)
         return close_representative
 
-    def addNode(self, ox : list[float], oy :list[float], rr : float, delta : float) -> None:
+    def addNode(self, delta : float) -> None:
         """
-        ox : obstacle の x座標 のリスト
-        oy : obstacle の y座標 のリスト
-        rr : obstacle の rr 以内は干渉と判定する閾値
         delta : 他のサンプル点との距離
         """
-        max_x = max(ox)
-        min_x = min(ox)
-        max_y = max(oy)
-        min_y = min(oy)
 
         is_sample_found = False
         qnew = Node(0, 0)
 
         for i in range(100): # 1個のノードを追加するのに100回までリトライする。
             # サンプル点を生成する
-            qnew.x = (random.random() * (max_x - min_x)) + min_x
-            qnew.y = (random.random() * (max_y - min_y)) + min_y
+            qnew.x = (random.random() * (self.collision_checker.max_x - self.collision_checker.min_x)) + self.collision_checker.min_x
+            qnew.y = (random.random() * (self.collision_checker.max_y - self.collision_checker.min_y)) + self.collision_checker.min_y
 
-            if self.isCollision(qnew, ox, oy, rr):
+            if self.collision_checker.isCollision(qnew):
                 continue # 新しく生成したサンプル点が干渉していたら再度乱数生成
             else:
                 is_sample_found = True
@@ -339,17 +349,17 @@ class MySpars:
             return
 
         # サンプル点に対してdelta内にあるvisible nodes を検索
-        visible_index, visible_nodes = self.searchVisibleNode(qnew, delta, ox, oy, rr)
+        visible_index, visible_nodes = self.searchVisibleNode(qnew, delta)
         if not self.checkAddCoverage(qnew, visible_nodes):
             if not self.checkAddConnectivity(qnew, visible_index):
-                if not self.checkAddInterface(qnew, visible_index, visible_nodes, ox ,oy, rr):
-                    representatives = self.findCloseRepresentatives(qnew, visible_index[0], delta, max_x, min_x, max_y, min_y, ox, oy, rr)
+                if not self.checkAddInterface(qnew, visible_index, visible_nodes):
+                    representatives = self.findCloseRepresentatives(qnew, visible_index[0], delta)
                     if len(representatives) != 0:
                         # TODO update_pair_points()
                         pass
-                    self.checkAddPath(visible_index[0], 0.6, ox, oy, rr)
+                    self.checkAddPath(visible_index[0], 0.6)
                     for rep in representatives:
-                        self.checkAddPath(rep, 0.6, ox, oy, rr)        
+                        self.checkAddPath(rep, 0.6)        
         return
         
     def plotGraph(self):
@@ -404,10 +414,12 @@ def main():
         plt.grid(True)
         plt.axis("equal")
 
-    spars_planner = MySpars()
+    collision_checker = CollisionChecker(ox, oy, 2.0)
+    spars_planner = MySpars(collision_checker)
+
     for i in range(5000):
         print("adding node ... {}".format(i))
-        spars_planner.addNode(ox, oy, 2.0, 4.0)
+        spars_planner.addNode(4.0)
 
     spars_planner.plotGraph()
 
